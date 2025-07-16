@@ -91,6 +91,7 @@ while len(parsed_data)>=2:
     poslist=[0 for _ in range(maxtime)]     #每个时刻判定线的位置
     timelist=[]                             #必须要切断的时刻
     bpmlist=[0 for _ in range(maxtime)]     #每个时刻bpm的数值
+    bpmaddlist=[0 for _ in range(maxtime)]  #绿蛇的bpm增量
     bpmmodify=[0.5 for _ in range(maxtime)] #bpm修改，默认0.5不修改
     zerolist=[]                             #暂存判定线需要置0的时刻
     for a in list1:             # 从原谱读取已有bpm和切断时刻
@@ -137,13 +138,14 @@ while len(parsed_data)>=2:
             timelist.append(starttime)
             timelist.append(endtime)
         if a[8]==2:     #绿色黑线；以蛇尾位置瞬移谱面
-            bpmlist[starttime]=60000*a[4]*2
+            bpmaddlist[starttime]=60000*a[4]*2
             timelist.append(starttime)
             timelist.append(starttime+1)
     for i in zerolist:
         poslist[i]=0
     for i in range(maxtime):
         bpmlist[i]*=bpmmodify[i]*2
+        bpmlist[i]+=bpmaddlist[i]
     timelist.append(maxtime-1)
     timelist=sorted(set(timelist))
     while timelist[0]<=0:timelist.pop(0)
