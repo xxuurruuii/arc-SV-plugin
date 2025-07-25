@@ -2,12 +2,14 @@ import re
 import math
 
 def parse_aff_file(content):
+    global maxtime
     tg=-1
     output=[]
     for s in content.split('\n'):
         s=s.strip()
         if s.startswith('timinggroup'):
             tg+=1
+            tgstarters.append(s)
             originalaff.append('')
             currenttg=[]
             continue
@@ -19,6 +21,7 @@ def parse_aff_file(content):
             params1=mat.group(1).split(',')
             params1[0]=int(params1[0])      #starttime
             params1[1]=int(params1[1])      #endtime
+            if params1[1]>maxtime:maxtime=params1[1]
             params1[2]=float(params1[2])    #x1
             params1[3]=float(params1[3])    #x2
             params1[4]=params1[4]           #easing
@@ -40,6 +43,7 @@ def parse_aff_file(content):
             mat=pat.match(s)
             params1=mat.group(1).split(',')
             params1[0]=int(params1[0])      #starttime
+            if params1[0]>maxtime:maxtime=params1[0]
             params1[1]=float(params1[1])    #bpm
             params1[2]=params1[2]               #beats
             params1=['timing']+params1
@@ -50,6 +54,7 @@ def parse_aff_file(content):
             mat=pat.match(s)
             params1=mat.group(1).split(',')
             params1[0]=int(params1[0])      #starttime
+            if params1[0]>maxtime:maxtime=params1[0]
             params1[1]=int(params1[1])      #x
             params1=['tap']+params1
             currenttg.append(params1)
@@ -77,8 +82,11 @@ for s in content.split('\n'):
         break
 k=60000*2/2
 
+maxtime=0
 originalaff=[]
+tgstarters=[]
 parsed_data = parse_aff_file(content)
+maxtime+=100
 #print(parsed_data)
 
 while len(parsed_data)>=2:
@@ -87,7 +95,7 @@ while len(parsed_data)>=2:
     a=list2.pop(0)
     bpm1=a[2]
     bpm1time=0
-    maxtime=max(list1[-1][1],list2[-1][2])+100
+    #maxtime=max(list1[-1][1],list2[-1][2])+100
     poslist=[0 for _ in range(maxtime)]     #每个时刻判定线的位置
     timelist=[]                             #必须要切断的时刻
     bpmlist=[0 for _ in range(maxtime)]     #每个时刻bpm的数值
@@ -151,15 +159,20 @@ while len(parsed_data)>=2:
     while timelist[0]<=0:timelist.pop(0)
     t1,t2=0,0
     output=''
+    lastbpm=0.00001
     while t2<maxtime-1 and len(timelist)>0:
         t2+=deltat
         if t2>=timelist[0]:
             t2=timelist.pop(0)
         if t2>=maxtime:break
         bpm1=(sum(bpmlist[t1:t2])-k*(poslist[t2]-poslist[t1]))/(t2-t1)
-        output+=f'timing({t1},{bpm1},4);\n'
+        bpm1=round(bpm1,4)
+        if bpm1!=lastbpm:
+            output+=f'timing({t1},{bpm1},4);\n'
+        lastbpm=bpm1
         t1=t2
-    f2.write(f'timinggroup(){{\n{output}')
+    f2.write(f'{tgstarters.pop(0)}\n{output}')
+    tgstarters.pop(0)
     for s in originalaff.pop(0).split('\n'):
         if not 'timing(' in s:f2.write(s+'\n')
     originalaff.pop(0)
