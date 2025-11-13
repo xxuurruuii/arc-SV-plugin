@@ -151,6 +151,8 @@ try:
                 timelist.append(starttime)
                 timelist.append(endtime)
             if a[8]==2:     #绿色黑线；以蛇尾位置瞬移谱面
+                if a[6]==1:     #若绿色黑线满足y=1, 该瞬移发生在前1ms
+                    starttime-=1
                 bpmaddlist[starttime]=60000*a[4]*2
                 timelist.append(starttime)
                 timelist.append(starttime+1)
