@@ -3,8 +3,113 @@ try:
     import os
     #print("当前工作目录:", os.getcwd())
     #print("脚本所在目录:", os.path.dirname(os.path.abspath(__file__)))
+    import bisect
     import re
     import math
+
+    def format_aff_float(value):
+        if abs(value)<1e-9:
+            value=0.0
+        s=f'{value:.6f}'.rstrip('0').rstrip('.')
+        if '.' not in s:
+            s+='.00'
+        else:
+            frac=s.split('.',1)[1]
+            if len(frac)<2:
+                s+='0'*(2-len(frac))
+        return s
+
+    def easing_progress(easing,ratio):
+        ratio=max(0.0,min(1.0,ratio))
+        if easing=='si':
+            return math.sin(math.pi/2*ratio)
+        if easing=='so':
+            return 1-math.cos(math.pi/2*ratio)
+        return ratio
+
+    def split_easing_mode(easing):
+        if easing in ('s','b','si','so'):
+            return easing,easing
+        if easing in ('sisi','siso','sosi','soso'):
+            return easing[:2],easing[2:]
+        return 's','s'
+
+    def interpolate_arc(starttime,endtime,v1,v2,easing,t):
+        if endtime==starttime:
+            return v1
+        ratio=(t-starttime)/(endtime-starttime)
+        return v1+(v2-v1)*easing_progress(easing,ratio)
+
+    def split_arc_line_by_timings(line,timing_points,timing_times=None,timing_bpms=None,drop_zero_bpm=False):
+        pat=re.compile('arc\\(([^)]+)\\)(.*);')
+        mat=pat.match(line)
+        if mat is None:
+            return [line]
+        params=mat.group(1).split(',')
+        if len(params)<10:
+            return [line]
+        try:
+            starttime=int(params[0])
+            endtime=int(params[1])
+            x1=float(params[2])
+            x2=float(params[3])
+            easing=params[4]
+            y1=float(params[5])
+            y2=float(params[6])
+            color=int(params[7])
+            hitsound=params[8]
+            arctype=params[9]
+        except:
+            return [line]
+        if endtime<=starttime:
+            return [line]
+        cut_points=sorted({t for t in timing_points if starttime<t<endtime})
+        if len(cut_points)==0:
+            return [line]
+
+        extra=mat.group(2).strip()
+        arctaps=[]
+        if extra!='':
+            if not (extra.startswith('[') and extra.endswith(']')):
+                return [line]
+            raw_parts=extra[1:-1].split(',')
+            for part in raw_parts:
+                part=part.strip()
+                if part=='':
+                    continue
+                arcpat=re.fullmatch('arctap\\((-?\\d+)\\)',part)
+                if arcpat is None:
+                    return [line]
+                arctaps.append(int(arcpat.group(1)))
+
+        xmode,ymode=split_easing_mode(easing)
+        points=[starttime]+cut_points+[endtime]
+        output=[]
+        for i in range(len(points)-1):
+            st=points[i]
+            ed=points[i+1]
+            if drop_zero_bpm and timing_times is not None and timing_bpms is not None and len(timing_times)>0:
+                idx=bisect.bisect_right(timing_times,st)-1
+                if idx>=0 and abs(timing_bpms[idx])<1e-9:
+                    continue
+            segx1=interpolate_arc(starttime,endtime,x1,x2,xmode,st)
+            segx2=interpolate_arc(starttime,endtime,x1,x2,xmode,ed)
+            segy1=interpolate_arc(starttime,endtime,y1,y2,ymode,st)
+            segy2=interpolate_arc(starttime,endtime,y1,y2,ymode,ed)
+
+            segment_taps=[]
+            for tap in arctaps:
+                if st<=tap<=ed and not (tap==st and i>0):
+                    segment_taps.append(tap)
+            segextra=''
+            if len(segment_taps)>0:
+                segextra='['+','.join([f'arctap({i})' for i in segment_taps])+']'
+
+            output.append(
+                f'arc({st},{ed},{format_aff_float(segx1)},{format_aff_float(segx2)},{easing},'
+                f'{format_aff_float(segy1)},{format_aff_float(segy2)},{color},{hitsound},{arctype}){segextra};'
+            )
+        return output
 
     def parse_aff_file(content):
         global maxtime
@@ -97,6 +202,8 @@ try:
     while len(parsed_data)>=2:
         list1=parsed_data.pop(0)
         list2=parsed_data.pop(0)
+        first_tg_noinput=('noinput' in tgstarters[0])
+        hidegroup_controls=[]                   # 由起始y=0.5的绿线生成的hidegroup控制
         a=list2.pop(0)
         bpm1=a[2]
         bpm1time=0
@@ -151,11 +258,17 @@ try:
                 timelist.append(starttime)
                 timelist.append(endtime)
             if a[8]==2:     #绿色黑线；以蛇尾位置瞬移谱面
-                if a[6]==1:     #若绿色黑线满足y=1, 该瞬移发生在前1ms
-                    starttime-=1
-                bpmaddlist[starttime]=60000*a[4]*2
-                timelist.append(starttime)
-                timelist.append(starttime+1)
+                y1=a[6]
+                y2=a[7]
+                if abs(y1-1.0)<1e-6 or abs(y1-0.0)<1e-6:
+                    if abs(y1-1.0)<1e-6:     #若绿色黑线满足y=1, 该瞬移发生在前1ms
+                        starttime-=1
+                    bpmaddlist[starttime]=60000*a[4]*2
+                    timelist.append(starttime)
+                    timelist.append(starttime+1)
+                elif abs(y1-0.5)<1e-6:
+                    if abs(y2-1.0)<1e-6 or abs(y2-0.0)<1e-6:
+                        hidegroup_controls.append((a[1],int(round(y2))))
         for i in zerolist:
             poslist[i]=0
         for i in range(maxtime):
@@ -166,6 +279,7 @@ try:
         while timelist[0]<=0:timelist.pop(0)
         t1,t2=0,0
         output=''
+        generated_timing_entries=[]
         lastbpm=0.00001
         while t2<maxtime-1 and len(timelist)>0:
             t2+=deltat
@@ -176,12 +290,30 @@ try:
             bpm1=round(bpm1,4)
             if bpm1!=lastbpm:
                 output+=f'timing({t1},{bpm1},4);\n'
+                generated_timing_entries.append((t1,bpm1))
             lastbpm=bpm1
             t1=t2
         f2.write(f'{tgstarters.pop(0)}\n{output}')
+        for t,hidevalue in hidegroup_controls:
+            f2.write(f'scenecontrol({t},hidegroup,0.00,{hidevalue});\n')
         tgstarters.pop(0)
-        for s in originalaff.pop(0).split('\n'):
-            if not 'timing(' in s:f2.write(s+'\n')
+        generated_timing_points=[i[0] for i in generated_timing_entries]
+        generated_timing_bpms=[i[1] for i in generated_timing_entries]
+        first_group_content=originalaff.pop(0)
+        for s in first_group_content.split('\n'):
+            if 'timing(' in s:
+                continue
+            if first_tg_noinput and s.startswith('arc'):
+                for seg in split_arc_line_by_timings(
+                    s,
+                    generated_timing_points,
+                    generated_timing_points,
+                    generated_timing_bpms,
+                    True
+                ):
+                    f2.write(seg+'\n')
+                continue
+            f2.write(s+'\n')
         originalaff.pop(0)
         #print(output)
     f2.close()
